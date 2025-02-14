@@ -4,12 +4,24 @@
 #include <algorithm>
 
 #include "debug.h"
+#include "terminal_graphics.h"
+
 
 // This function contains our program's core functionality:
 
+// Creating struct for eddy current data
+struct eddyCurrentParams {
+  float amplitude;
+  float gradient;
+};
+
+// Load the data
+std::vector<eddyCurrentParams> eddy_components;
+std::vector<float> desired_gradient;
+
 void run (std::vector<std::string>& args)
 {
-  debug::verbose = std::erase (args, "-v");
+  debug::verbose = std::erase(args, "-v");
 
   if (args.size() < 2)
     throw std::runtime_error ("missing arguments - expected at least 1 argument");
