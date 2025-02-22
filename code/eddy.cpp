@@ -4,88 +4,187 @@
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
+#include <cmath>
 
 #include "debug.h"
 #include "terminal_graphics.h"
 
-
-// This function contains our program's core functionality:
-
-// Creating struct for eddy current data
-struct eddyCurrentParams {
-  float amplitude;
-  float gradient;
+// Struct for eddy current parameters
+struct EddyCurrentParams {
+    float amplitude;
+    float rateConstant;
 };
 
-// Load the data
-std::vector<eddyCurrentParams> eddy_components;
+// Global variables
+std::vector<EddyCurrentParams> eddy_components;
 std::vector<float> desired_gradient;
 
-
-void loadGradient (const std::string& filename, std::vector<float>& gradient){
-  std::ifstream infile(filename);
-  if (!infile){
-    throw std::runtime_error("Failed to open file: " + filename);
-  }
-
-  float value;
-  while (infile >> value){
-    gradient.push_back(value);
-  }
+// Load eddy current parameters from file
+void loadParameters(const std::string& filename) {
+    std::ifstream infile(filename);
+    if (!infile) {
+        throw std::runtime_error("Failed to open parameters file: " + filename);
+    }
+    float amplitude, rate;
+    while (infile >> amplitude >> rate) {
+        eddy_components.push_back({amplitude, rate});
+    }
+    if (eddy_components.empty()) {
+        throw std::runtime_error("No eddy current parameters found in: " + filename);
+    }
 }
 
-void displayGradient(const std::vector<float>& gradient) {
-  if (gradient.empty()) {
+// Load gradient time course from file
+void loadGradient(const std::string& filename, std::vector<float>& gradient) {
+    std::ifstream infile(filename);
+    if (!infile) {
+        throw std::runtime_error("Failed to open gradient file: " + filename);
+    }
+    float value;
+    gradient.clear();
+    while (infile >> value) {
+        gradient.push_back(value);
+    }
+    if (gradient.empty()) {
+        throw std::runtime_error("No gradient data found in: " + filename);
+    }
+}
+
+// Compute the predicted gradient time course based on eddy currents
+std::vector<float> computePredictedGradient(const std::vector<float>& input_gradient) {
+    std::vector<float> predicted_gradient = input_gradient;
+    std::vector<std::vector<float>> currents(eddy_components.size(), std::vector<float>(input_gradient.size(), 0.0f));
+
+    for (size_t t = 1; t < input_gradient.size(); ++t) {
+        float dG = input_gradient[t] - input_gradient[t - 1];
+        for (size_t n = 0; n < eddy_components.size(); ++n) {
+            currents[n][t] = currents[n][t - 1] + dG - eddy_components[n].rateConstant * currents[n][t - 1];
+            predicted_gradient[t] -= eddy_components[n].amplitude * currents[n][t];
+        }
+    }
+    return predicted_gradient;
+}
+
+// Compute maximum absolute deviation between two vectors
+float computeMaxDeviation(const std::vector<float>& desired, const std::vector<float>& predicted) {
+    if (desired.size() != predicted.size()) {
+        throw std::runtime_error("Gradient vectors size mismatch");
+    }
+    float max_dev = 0.0f;
+    for (size_t i = 0; i = desired.size(); ++i) {
+        float dev = std::abs(desired[i] - predicted[i]);
+        max_dev = std::max(max_dev, dev);
+    }
+    return max_dev;
+}
+
+// Display gradients using terminal graphics
+// Display gradients using terminal graphics with dynamic ylim based on all data
+void displayGradients(const std::vector<float>& input, const std::vector<float>& predicted) {
+  if (input.empty() || predicted.empty()) {
       std::cerr << "Gradient data is empty. Nothing to display.\n";
       return;
   }
-  // Compute the minimum and maximum values in the gradient
-  auto [min_it, max_it] = std::minmax_element(gradient.begin(), gradient.end());
+
+  // Find the min and max across desired, input, and predicted gradients
+  std::vector<float> all_values;
+  all_values.insert(all_values.end(), desired_gradient.begin(), desired_gradient.end());
+  all_values.insert(all_values.end(), input.begin(), input.end());
+  all_values.insert(all_values.end(), predicted.begin(), predicted.end());
+
+  auto [min_it, max_it] = std::minmax_element(all_values.begin(), all_values.end());
   float min_val = *min_it;
   float max_val = *max_it;
 
-  // Display the gradient using TG::plot()
+  // Add a small buffer (e.g., 10% of the range) to ensure all data is visible
+  float range = max_val - min_val;
+  float buffer = range * 0.1;
+  float new_min = min_val - buffer;
+  float new_max = max_val + buffer;
+
   TG::plot(1200, 600)
-    .set_ylim(min_val * 2, max_val * 2)
-    .add_line(gradient)
-    .show();
+      .set_ylim(new_min, new_max)  // Dynamic y-axis limits with buffer
+      .add_line(desired_gradient, 2)  // Yellow for desired
+      .add_line(input, 3)             // Magenta for input
+      .add_line(predicted, 4)         // Cyan for predicted
+      .show();
 }
 
-
-void run (std::vector<std::string>& args)
-{
-  debug::verbose = std::erase(args, "-v");
-
-  if (args.size() < 3)
-    throw std::runtime_error ("missing arguments - expected at least 2 argument");
-
-  std::cerr << "reading file \"" << args[1] << "\"\n";
-
-  std::cerr << "reading file \"" << args[2] << "\"\n";
-  loadGradient(args[2], desired_gradient);
-
-  displayGradient(desired_gradient);
+// Save the compensated gradient to a file
+void saveGradient(const std::string& filename, const std::vector<float>& gradient) {
+    std::ofstream outfile(filename);
+    if (!outfile) {
+        throw std::runtime_error("Failed to open output file: " + filename);
+    }
+    for (float value : gradient) {
+        outfile << std::scientific << value << "\n";
+    }
 }
 
+// Main program logic
+void run(std::vector<std::string>& args) {
+    // Handle verbose flag
+    debug::verbose = std::erase(args, "-v");
 
-// skeleton main() function, whose purpose is now to pass the arguments to
-// run() in the expected format, and catch and handle any exceptions that may
-// be thrown.
+    // Parse number of iterations
+    int num_iterations = 10; // Default
+    auto n_it = std::find(args.begin(), args.end(), "-n");
+    if (n_it != args.end() && std::next(n_it) != args.end()) {
+        num_iterations = std::stoi(*std::next(n_it));
+        args.erase(n_it, n_it + 2);
+    }
 
-int main (int argc, char* argv[])
-{
-  try {
-    std::vector<std::string> args (argv, argv+argc);
-    run (args);
-  }
-  catch (std::exception& excp) {
-    std::cerr << "ERROR: " << excp.what() << " - aborting\n";
-    return 1;
-  }
-  catch (...) {
-    std::cerr << "ERROR: unknown exception thrown - aborting\n";
-    return 1;
-  }
+    // Check minimum arguments
+    if (args.size() < 3) {
+        throw std::runtime_error("Missing arguments - expected at least 2 arguments: <program> <params_file> <gradient_file> [output_file]");
+    }
 
-  return 0;
+    // Load input data
+    std::cerr << "Reading parameters file \"" << args[1] << "\"\n";
+    loadParameters(args[1]);
+    std::cerr << "Reading gradient file \"" << args[2] << "\"\n";
+    loadGradient(args[2], desired_gradient);
+
+    // Initialize input gradient as a copy of desired gradient
+    std::vector<float> input_gradient = desired_gradient;
+
+    // Iterative pre-emphasis
+    for (int iter = 0; iter < num_iterations; ++iter) {
+        std::vector<float> predicted_gradient = computePredictedGradient(input_gradient);
+        float max_dev = computeMaxDeviation(desired_gradient, predicted_gradient);
+        std::cerr << "Iteration " << iter + 1 << ": Max deviation = " << max_dev << "\n";
+
+        // Display gradients on the first and last iteration
+        if (iter == 0 || iter == num_iterations - 1) {
+            displayGradients(input_gradient, predicted_gradient);
+        }
+
+        // Compute difference and update input gradient
+        for (size_t i = 0; i < desired_gradient.size(); ++i) {
+            float diff = desired_gradient[i] - predicted_gradient[i];
+            input_gradient[i] += diff;
+        }
+    }
+
+    // Save output if requested
+    if (args.size() > 3) {
+        std::cerr << "Writing compensated gradient to \"" << args[3] << "\"\n";
+        saveGradient(args[3], input_gradient);
+    }
+}
+
+int main(int argc, char* argv[]) {
+    try {
+        std::vector<std::string> args(argv, argv + argc);
+        run(args);
+    }
+    catch (std::exception& excp) {
+        std::cerr << "ERROR: " << excp.what() << " - aborting\n";
+        return 1;
+    }
+    catch (...) {
+        std::cerr << "ERROR: unknown exception thrown - aborting\n";
+        return 1;
+    }
+    return 0;
 }
