@@ -71,43 +71,42 @@ float computeMaxDeviation(const std::vector<float>& desired, const std::vector<f
         throw std::runtime_error("Gradient vectors size mismatch");
     }
     float max_dev = 0.0f;
-    for (size_t i = 0; i = desired.size(); ++i) {
+    for (size_t i = 0; i < desired.size(); ++i) { 
         float dev = std::abs(desired[i] - predicted[i]);
         max_dev = std::max(max_dev, dev);
     }
     return max_dev;
 }
 
-// Display gradients using terminal graphics
 // Display gradients using terminal graphics with dynamic ylim based on all data
 void displayGradients(const std::vector<float>& input, const std::vector<float>& predicted) {
-  if (input.empty() || predicted.empty()) {
-      std::cerr << "Gradient data is empty. Nothing to display.\n";
-      return;
-  }
+    if (input.empty() || predicted.empty()) {
+        std::cerr << "Gradient data is empty. Nothing to display.\n";
+        return;
+    }
 
-  // Find the min and max across desired, input, and predicted gradients
-  std::vector<float> all_values;
-  all_values.insert(all_values.end(), desired_gradient.begin(), desired_gradient.end());
-  all_values.insert(all_values.end(), input.begin(), input.end());
-  all_values.insert(all_values.end(), predicted.begin(), predicted.end());
+    // Find the min and max across desired, input, and predicted gradients
+    std::vector<float> all_values;
+    all_values.insert(all_values.end(), desired_gradient.begin(), desired_gradient.end());
+    all_values.insert(all_values.end(), input.begin(), input.end());
+    all_values.insert(all_values.end(), predicted.begin(), predicted.end());
 
-  auto [min_it, max_it] = std::minmax_element(all_values.begin(), all_values.end());
-  float min_val = *min_it;
-  float max_val = *max_it;
+    auto [min_it, max_it] = std::minmax_element(all_values.begin(), all_values.end());
+    float min_val = *min_it;
+    float max_val = *max_it;
 
-  // Add a small buffer (e.g., 10% of the range) to ensure all data is visible
-  float range = max_val - min_val;
-  float buffer = range * 0.1;
-  float new_min = min_val - buffer;
-  float new_max = max_val + buffer;
+    // Add a small buffer (e.g., 10% of the range) to ensure all data is visible
+    float range = max_val - min_val;
+    float buffer = range * 0.2;
+    float new_min = min_val - buffer;
+    float new_max = max_val + buffer;
 
-  TG::plot(1200, 600)
-      .set_ylim(new_min, new_max)  // Dynamic y-axis limits with buffer
-      .add_line(desired_gradient, 2)  // Yellow for desired
-      .add_line(input, 3)             // Magenta for input
-      .add_line(predicted, 4)         // Cyan for predicted
-      .show();
+    TG::plot(1200, 600)
+        .set_ylim(new_min, new_max)  // Dynamic y-axis limits with buffer
+        .add_line(desired_gradient, 2)  // Yellow for desired
+        .add_line(input, 3)             // Magenta for input
+        .add_line(predicted, 4)         // Cyan for predicted
+        .show();
 }
 
 // Save the compensated gradient to a file
@@ -121,7 +120,7 @@ void saveGradient(const std::string& filename, const std::vector<float>& gradien
     }
 }
 
-// Main program logic
+// Main program logic with 0-based iteration counter, showing only initial and last iterations graphically
 void run(std::vector<std::string>& args) {
     // Handle verbose flag
     debug::verbose = std::erase(args, "-v");
@@ -148,23 +147,36 @@ void run(std::vector<std::string>& args) {
     // Initialize input gradient as a copy of desired gradient
     std::vector<float> input_gradient = desired_gradient;
 
-    // Iterative pre-emphasis
-    for (int iter = 0; iter < num_iterations; ++iter) {
-        std::vector<float> predicted_gradient = computePredictedGradient(input_gradient);
-        float max_dev = computeMaxDeviation(desired_gradient, predicted_gradient);
-        std::cerr << "Iteration " << iter + 1 << ": Max deviation = " << max_dev << "\n";
+    // Compute and display initial state (iteration 0)
+    std::vector<float> predicted_gradient = computePredictedGradient(input_gradient);
+    float max_dev = computeMaxDeviation(desired_gradient, predicted_gradient);
+    std::cerr << "iteration " << 0 << ", maximum absolute deviation = " << max_dev << "\n";
+    displayGradients(input_gradient, predicted_gradient); // Show initial plot
 
-        // Display gradients on the first and last iteration
-        if (iter == 0 || iter == num_iterations - 1) {
-            displayGradients(input_gradient, predicted_gradient);
-        }
-
+    // Iterative pre-emphasis with 0-based iteration counter, showing only last iteration graphically
+    for (int iter = 0; iter < num_iterations - 1; ++iter) { // Run up to but not including the last iteration
         // Compute difference and update input gradient
         for (size_t i = 0; i < desired_gradient.size(); ++i) {
             float diff = desired_gradient[i] - predicted_gradient[i];
             input_gradient[i] += diff;
         }
+
+        predicted_gradient = computePredictedGradient(input_gradient);
+        max_dev = computeMaxDeviation(desired_gradient, predicted_gradient);
+        std::cerr << "iteration " << iter + 1 << ", maximum absolute deviation = " << max_dev << "\n";
     }
+
+    // Display and report the last iteration (e.g., iteration 10 for -n 10)
+    // Compute difference and update input gradient for the last iteration
+    for (size_t i = 0; i < desired_gradient.size(); ++i) {
+        float diff = desired_gradient[i] - predicted_gradient[i];
+        input_gradient[i] += diff;
+    }
+
+    predicted_gradient = computePredictedGradient(input_gradient);
+    max_dev = computeMaxDeviation(desired_gradient, predicted_gradient);
+    std::cerr << "iteration " << num_iterations << ", maximum absolute deviation = " << max_dev << "\n";
+    displayGradients(input_gradient, predicted_gradient); // Show final plot
 
     // Save output if requested
     if (args.size() > 3) {
