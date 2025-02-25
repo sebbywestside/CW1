@@ -6,10 +6,12 @@
 #include <stdexcept>
 #include <cmath>
 
+// Include custom headers for debugging and graphics displaying 
 #include "debug.h"
 #include "terminal_graphics.h"
 
 // Struct for eddy current parameters
+// stores amplitude and desired gradient 
 struct EddyCurrentParams {
     float amplitude;
     float rateConstant;
@@ -101,12 +103,10 @@ void displayGradients(const std::vector<float>& input, const std::vector<float>&
     float new_min = min_val - buffer;
     float new_max = max_val + buffer;
 
-    TG::plot(1200, 600)
+    TG::plot(1600, 600)
         .set_ylim(new_min, new_max)  // Dynamic y-axis limits with buffer
-        .add_line(desired_gradient, 2)  // Yellow for desired
-        .add_line(input, 3)             // Magenta for input
-        .add_line(predicted, 4)         // Cyan for predicted
-        .show();
+        .add_line(input, 2)             // yellow
+        .add_line(predicted, 3);         // magenta
 }
 
 // Save the compensated gradient to a file
@@ -147,23 +147,21 @@ void run(std::vector<std::string>& args) {
     // Initialize input gradient as a copy of desired gradient
     std::vector<float> input_gradient = desired_gradient;
 
-    // Compute and display initial state (iteration 0)
+    // Compute and display initial state 
     std::vector<float> predicted_gradient = computePredictedGradient(input_gradient);
     float max_dev = computeMaxDeviation(desired_gradient, predicted_gradient);
     std::cerr << "iteration " << 0 << ", maximum absolute deviation = " << max_dev << "\n";
     displayGradients(input_gradient, predicted_gradient); // Show initial plot
 
-    // Iterative pre-emphasis with 0-based iteration counter, showing only last iteration graphically
-    for (int iter = 0; iter < num_iterations - 1; ++iter) { // Run up to but not including the last iteration
+    // Iterative pre-emphasis with 0-based iteration counter
+    for (int iter = 0; iter < num_iterations - 1; ++iter) { 
         // Compute difference and update input gradient
         for (size_t i = 0; i < desired_gradient.size(); ++i) {
             float diff = desired_gradient[i] - predicted_gradient[i];
             input_gradient[i] += diff;
         }
-
+        // Compute predicted gradient 
         predicted_gradient = computePredictedGradient(input_gradient);
-        max_dev = computeMaxDeviation(desired_gradient, predicted_gradient);
-        std::cerr << "iteration " << iter + 1 << ", maximum absolute deviation = " << max_dev << "\n";
     }
 
     // Display and report the last iteration (e.g., iteration 10 for -n 10)
